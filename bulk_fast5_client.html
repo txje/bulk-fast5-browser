@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+  <head>
+    <title>Bulk FAST5 Browser</title>
+    <style>
+body {
+  font-family: courier;
+  font-size: 12px;
+}
+.button {
+  font-family: courier;
+  font-size: 12px;
+  border: 1px solid #CCCCCC;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: center;
+  padding: 5px;
+  display: inline-block;
+}
+    </style>
+    <script>
+      // utils
+      function range(l, offset) {
+        return Array.apply(null, Array(l)).map(function (_, i) {return i + (offset ? offset : 0);});
+      }
+
+      var Plot = function(ctx, xmin, xmax, ymin, ymax) {
+        this.ctx = ctx;
+        this.xmin = xmin;
+        this.xmax = xmax;
+        this.ymin = ymin;
+        this.ymax = ymax;
+        this.yrange = this.ymax - this.ymin + 1;
+        this.y_axis_min = this.ymin - (this.yrange * 0.1);
+        this.y_axis_max = this.ymax + (this.yrange * 0.1);
+        this.xrange = this.xmax - this.xmin + 1;
+        this.x_axis_min = this.xmin;
+        this.x_axis_max = this.xmax;
+        this.margin = 10;
+        this.x_axis_height = 50;
+        this.y_axis_width = 50;
+        this.width = this.ctx.canvas.clientWidth * 2; // x2 for retina
+        this.height = this.ctx.canvas.clientHeight * 2;
+        this.plot_width = (this.width - this.margin*2 - this.y_axis_width);
+        this.plot_height = (this.height - this.margin*2 - this.x_axis_height);
+        this.yscale = this.plot_height / (this.y_axis_max - this.y_axis_min);
+        this.xscale = this.plot_width / (this.x_axis_max - this.x_axis_min);
+
+        console.log("Plot range:", "x", xmin, "-", xmax, "y", ymin, "-", ymax);
+
+        this.ctx.clearRect(0, 0, this.width, this.height);
+
+        this.draw_axes = function() {
+          // draw axes
+          /*
+          this.ctx.beginPath();
+          this.ctx.moveTo(this.margin + this.y_axis_width, this.margin);
+          this.ctx.lineTo(this.margin + this.y_axis_width, this.margin + this.plot_height);
+          this.ctx.lineTo(this.width - this.margin, this.margin + this.plot_height);
+          this.ctx.stroke();
+          */
+
+          // y axis labels
+          var max_ticks = 20;
+          var tick_multiples = [0.1,0.5,1,5,10,50,100,500];
+          this.y_tick = 1000;
+          for(var i = 0; i < tick_multiples.length; i++) {
+            if(this.yrange / tick_multiples[i] <= max_ticks) {
+              this.y_tick = tick_multiples[i];
+              break;
+            }
+          }
+          this.ctx.textAlign = "end";
+          this.ctx.textBaseline = "middle";
+          this.ctx.fillStyle = "black";
+          for(var t = (Math.floor(this.y_axis_min / this.y_tick) + 1) * this.y_tick; t <= this.y_axis_max; t = t + this.y_tick) {
+            this.ctx.fillText(t, this.y_axis_width, this.margin + this.plot_height - (t-this.y_axis_min)*this.yscale);
+            this.ctx.strokeStyle = "#CCCCCC";
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.y_axis_width + this.margin, this.margin + this.plot_height - (t-this.y_axis_min)*this.yscale);
+            this.ctx.lineTo(this.y_axis_width + this.margin + this.plot_width, this.margin + this.plot_height - (t-this.y_axis_min)*this.yscale);
+            this.ctx.stroke();
+          }
+
+          // x axis labels
+          var max_ticks = 20;
+          var tick_multiples = [0.1,0.5,1,5,10,50,100,500,1000,5000,10000,50000];
+          this.x_tick = 100000;
+          for(var i = 0; i < tick_multiples.length; i++) {
+            if(this.xrange / tick_multiples[i] <= max_ticks) {
+              this.x_tick = tick_multiples[i];
+              break;
+            }
+          }
+          this.ctx.textAlign = "center";
+          this.ctx.textBaseline = "hanging";
+          this.ctx.fillStyle = "black";
+          for(var t = (Math.floor(this.x_axis_min / this.x_tick)) * this.x_tick; t <= this.x_axis_max; t = t + this.x_tick) {
+            this.ctx.fillText(t, this.margin + this.y_axis_width + (t-this.x_axis_min)*this.xscale, this.margin*2 + this.plot_height);
+            this.ctx.strokeStyle = "#CCCCCC";
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.margin + this.y_axis_width + (t-this.x_axis_min)*this.xscale, this.margin + this.plot_height);
+            this.ctx.lineTo(this.margin + this.y_axis_width + (t-this.x_axis_min)*this.xscale, this.margin);
+            this.ctx.stroke();
+          }
+        };
+
+        this.plot = function(x, y, color) {
+          this.ctx.strokeStyle = color;
+          this.ctx.lineWidth = 1;
+          this.ctx.beginPath();
+          this.ctx.moveTo(this.margin + this.y_axis_width + (x[0]-this.x_axis_min)*this.xscale, this.margin + this.plot_height - (y[0]-this.y_axis_min)*this.yscale);
+          for(var i = 1; i < x.length; i++) {
+            this.ctx.lineTo(this.margin + this.y_axis_width + (x[i]-this.x_axis_min)*this.xscale, this.margin + this.plot_height - (y[i]-this.y_axis_min)*this.yscale);
+          }
+          this.ctx.stroke();
+        };
+
+        this.plot_events = function(data, color, mult) {
+          this.ctx.strokeStyle = color;
+          this.ctx.lineWidth = 2;
+          for(var i in data) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(this.margin + this.y_axis_width + (data[i][0] - this.x_axis_min)*this.xscale, this.margin + this.plot_height - (data[i][2] - this.y_axis_min)*this.yscale);
+            this.ctx.lineTo(this.margin + this.y_axis_width + (data[i][0] + data[i][1] -this.x_axis_min)*this.xscale, this.margin + this.plot_height - (data[i][2] - this.y_axis_min)*this.yscale);
+            this.ctx.stroke();
+          }
+        };
+      }
+
+      var channel_states = {
+        "200": ["unclassified", "#FFFFFF"],
+        "201": ["unclassified", "#FFFFFF"],
+        "203": ["unclassified", "#FFFFFF"],
+        "0": ["below range", "#B5AEA7", -Math.Inf, -5], // label, color, min, max
+        "1": ["zero", "#0084A9", -5, 10],
+        "2": ["above range", "#90C6E7", 10, Math.Inf],
+        "3": ["single pore", "#00CC00"],
+        "4": ["strand", "#00FF00"],
+        "5": ["multiple", "#F57E20"],
+        "6": ["unavailable", "#54B8B1"],
+        "7": ["unblocking", "#A53F97"],
+        "10": ["saturated", "#333333"],
+        "11": ["adapter", "#EDE797"]
+      };
+      var socket, plt;
+
+      function send(msg) {
+        console.log("send: " + msg);
+        socket.send(msg);
+      }
+      function startup() {
+        var ctx = get_canvas("squiggle_canvas");
+
+        socket = new WebSocket("ws://localhost:8080");
+        socket.onopen = function(msg){
+          console.log("Websocket is open");
+          send("meta");
+          send("signal 1 820000 920000");
+          send("events 1 820000 920000");
+          send("reads 1 820000 920000");
+        }
+        socket.onmessage = function(evt){
+          var data = JSON.parse(evt.data);
+          console.log("recv:", data);
+          if("error" in data) {
+            console.error(data["error"]);
+            return;
+          }
+          if("signal" in data) {
+            drawSignal(ctx, data["signal"], data["start"], data["state"], data["mux"]);
+          }
+          if("events" in data) {
+            drawEvents(plt, data["events"]);
+          }
+          if("reads" in data) {
+            drawReads(plt, data["reads"]);
+          }
+        }
+        socket.onclose = function(msg){
+          console.log("Websocket is closed");
+        }
+      }
+
+      function get_canvas(id) {
+        var ctx = document.getElementById(id).getContext("2d");
+        var width = ctx.canvas.clientWidth;
+        var height = ctx.canvas.clientHeight;
+        ctx.canvas.setAttribute("width", width*2); // x2 for retina
+        ctx.canvas.setAttribute("height", height*2);
+        // these have to be done after resetting the size
+        ctx.translate(0.5, 0.5); // to make 1px lines crisp
+        ctx.font = "20px sans-serif";
+        return ctx;
+      }
+
+      function drawSignal(ctx, y, st, state, mux) {
+        var ymin = Math.min(...y); // "spread" operator, spreads the contents of data into arguments
+        var ymax = Math.max(...y);
+        var xmin = st;
+        var xmax = st + y.length;
+        var x = range(xmax-xmin, xmin);
+
+        // draw signal
+        plt = new Plot(ctx, x[0], x[x.length-1], Math.min(...y), Math.max(...y));
+        plt.draw_axes();
+        plt.plot(x, y, "#0000FF");
+
+        // draw state
+        var state_ctx = get_canvas("state_canvas");
+        var x_start = plt.margin + plt.y_axis_width;
+        var current_x = plt.xmin;
+        for(var i = 1; i < state.length; i++) {
+          if(!(state[i-1][1] in channel_states)) {
+            console.log("unknown state:", state[i-1][1]);
+            state_ctx.fillStyle = channel_states["200"]; // unclassified
+          } else {
+            state_ctx.fillStyle = channel_states["" + state[i-1][1]][1];
+          }
+          state_ctx.fillRect(x_start, 0, (state[i][0]-current_x) * plt.xscale, 20);
+          x_start += (state[i][0]-current_x) * plt.xscale;
+          current_x = state[i][0];
+        }
+
+        // draw mux
+        var mux_ctx = get_canvas("mux_canvas");
+        var x_start = plt.margin + plt.y_axis_width;
+        var current_x = plt.xmin;
+        for(var i = 1; i < mux.length; i++) {
+          if(mux[i-1][1] - 1 <= 4) {
+            mux_ctx.fillStyle = ["blue", "red", "green", "#00FFFF"][mux[i-1][1] - 1];
+            mux_ctx.fillRect(x_start, 0, (mux[i][0]-current_x) * plt.xscale, 20);
+          } else if (mux[i-1][1] != 7) {
+            console.log("Unknown mux:", mux[i-1][1]);
+          }
+          x_start += (mux[i][0]-current_x) * plt.xscale;
+          current_x = mux[i][0];
+        }
+
+      }
+
+      function drawEvents(plt, data) {
+        plt.plot_events(data, "#FF0000");
+      }
+
+      function drawReads(plt, data) {
+        // merge blocks that are actually the same read
+        // reads are in the format [st, en, name, read#, event_start, event_end]
+        var reads = [];
+        var first = 0;
+        var length = 0;
+        for(var i = 0; i <= data.length; i++) {
+          if(i >= data.length || data[i][3] != data[first][3]) {
+            reads.push([data[first][0], length, data[first][2], data[first][3], data[first][4], data[i-1][5]]);
+            first = i;
+            length = 0;
+          }
+          if(i < data.length) {
+            length = length + data[i][1];
+          }
+        }
+        console.log("Reads:", reads);
+
+        var read_ctx = get_canvas("read_canvas");
+        var x_start = plt.margin + plt.y_axis_width;
+        var current_x = plt.xmin;
+        for(var i = 0; i < reads.length; i++) {
+          read_ctx.fillStyle = "blue";
+          read_ctx.fillRect(plt.margin + plt.y_axis_width + (reads[i][0] - plt.x_axis_min) * plt.xscale - 1, 0, 3, 20);
+          read_ctx.fillRect(plt.margin + plt.y_axis_width + (reads[i][0] - plt.x_axis_min) * plt.xscale, 7, reads[i][1] * plt.xscale, 3);
+          read_ctx.fillRect(plt.margin + plt.y_axis_width + (reads[i][0] + reads[i][1] - plt.x_axis_min) * plt.xscale - 1, 0, 3, 20);
+        }
+
+      }
+
+      function update() {
+        var st = document.getElementById("st").value;
+        var en = document.getElementById("en").value;
+        var ch = document.getElementById("ch").value;
+        send("signal " + ch + " " + st + " " + en);
+        send("events " + ch + " " + st + " " + en);
+        send("reads " + ch + " " + st + " " + en);
+      }
+
+      function shift(amt) {
+        var st = parseInt(document.getElementById("st").value);
+        var en = parseInt(document.getElementById("en").value);
+        var range = en - st;
+        document.getElementById("st").value = st + amt*range;
+        document.getElementById("en").value = en + amt*range;
+        update();
+      }
+
+      function goto(ch, st, en) {
+        document.getElementById("ch").value = ch;
+        document.getElementById("st").value = st;
+        document.getElementById("en").value = en;
+        update();
+      }
+
+      function zoom(mult) {
+        var st = parseInt(document.getElementById("st").value);
+        var en = parseInt(document.getElementById("en").value);
+        var range = en - st;
+        var md = st + (range/2);
+        document.getElementById("st").value = md - range * mult/2;
+        document.getElementById("en").value = md + range * mult/2;
+        update();
+      }
+    </script>
+  </head>
+  <body onload="startup()">
+    Bulk FAST5 Interactive Client
+    <br/>
+    <br/>
+    channel: <input type="text" id="ch" value="1" style="width: 50px;"/>
+    <div class="button" onclick="shift(-1)">&lt;&lt;</div>
+    <div class="button" onclick="shift(-0.2)">&lt;</div>
+    start: <input type="text" value="820000" id="st" style="width: 70px;"/>
+    <div class="button" onclick="zoom(2)">-</div>
+    <div class="button" onclick="zoom(0.5)">+</div>
+    end: <input type="text" value="920000" id="en" style="width: 70px;"/>
+    <div class="button" onclick="shift(0.2)">&gt;</div>
+    <div class="button" onclick="shift(1)">&gt;&gt;</div>
+    <div class="button" onclick="update()">Update</div>
+    <br/>
+    <div class="button" onclick="goto('243', '2496000', '2596000')">Normal example</div>
+    <div class="button" onclick="goto('243', '2056000', '2156000')">Stuck example</div>
+    <div class="button" onclick="goto('243', '1756000', '1856000')">Eject example</div>
+    <div class="button" onclick="goto('243', '2544500', '2545000')">Event closeup</div>
+    <br/>
+    <br/>
+    Reads
+    <br/>
+    <canvas id="read_canvas" style="width:1000px; height:20px;"></canvas>
+    <br/>
+    Channel state (unclassified <div style="display:inline-block; width:10px; height:10px; border:1px solid #000000"></div>, below range <div style="display:inline-block; width:10px; height:10px; background-color:#B5AEA7"></div>, zero <div style="display:inline-block; width:10px; height:10px; background-color:#0084A9"></div>, above range <div style="display:inline-block; width:10px; height:10px; background-color:#90C6E7"></div>, single pore <div style="display:inline-block; width:10px; height:10px; background-color:#00CC00"></div>, strand <div style="display:inline-block; width:10px; height:10px; background-color:#00FF00"></div>, multiple <div
+      style="display:inline-block; width:10px; height:10px; background-color:#F57E20"></div>, unavailable <div style="display:inline-block; width:10px; height:10px; background-color:#54B8B1"></div>, unblocking <div style="display:inline-block; width:10px; height:10px; background-color:#A53F97"></div>, saturated <div style="display:inline-block; width:10px; height:10px; background-color:#333333"></div>, adapter <div style="display:inline-block; width:10px; height:10px;
+      background-color:#EDE797"></div>)
+    <br/>
+    <canvas id="state_canvas" style="width:1000px; height:20px;"></canvas>
+    <br/>
+    Mux (1: <div style="display:inline-block; width:10px; height:10px; background-color:blue"></div>, 2: <div style="display:inline-block; width:10px; height:10px; background-color:red"></div>, 3: <div style="display:inline-block; width:10px; height:10px; background-color:green"></div>, 4: <div style="display:inline-block; width:10px; height:10px; background-color:#00FFFF"></div>, Unknown/inactive: <div style="display:inline-block; width:10px; height:10px; border:1px solid #000000"></div>)
+    <br/>
+    <canvas id="mux_canvas" style="width:1000px; height:20px;"></canvas>
+    <br/>
+    <canvas id="squiggle_canvas" style="width:1000px; height:400px;"></canvas>
+  </body>
+</html>
